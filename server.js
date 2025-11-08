@@ -6,6 +6,10 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import { auth } from "./src/middleware/auth.js";
 
+const allowedOrigins = [
+  "https://ssaems-frontend1.onrender.com"
+];
+
 import bulkUsersRoutes from "./src/routes/admin.bulkUsers.routes.js";
 import adminUsersRoutes from "./src/routes/admin.users.routes.js";
 import allocationRoutes from "./src/routes/allocations.js"; 
