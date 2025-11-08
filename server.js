@@ -4,15 +4,11 @@ import dotenv from "dotenv";
 import morgan from "morgan";
 import cookieParser from "cookie-parser";
 import cors from "cors";
-import { auth } from "./src/middleware/auth.js";
-
-const allowedOrigins = [
-  "https://ssaems-frontend1.onrender.com"
-];
+// import { auth } from "./src/middleware/auth.js"; // not used here, keep if needed
 
 import bulkUsersRoutes from "./src/routes/admin.bulkUsers.routes.js";
 import adminUsersRoutes from "./src/routes/admin.users.routes.js";
-import allocationRoutes from "./src/routes/allocations.js"; 
+import allocationRoutes from "./src/routes/allocations.js";
 
 import { connectDB } from "./src/config/db.js";
 
@@ -32,19 +28,44 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 4000;
+const NODE_ENV = process.env.NODE_ENV || "development";
 
-/* ---------- CORS ---------- */
-const envOrigins = (process.env.CORS_ORIGIN || "")
+/* ---------- CORS (robust, works with preflight) ---------- */
+/**
+ * Allowed origins:
+ * - From env: CORS_ORIGIN="https://ssaems-frontend1.onrender.com,https://another.com"
+ * - Fallback to your Render frontend if env is missing
+ */
+const allowedOriginsFromEnv = (process.env.CORS_ORIGIN || "")
   .split(",")
   .map(s => s.trim())
   .filter(Boolean);
 
-const isDev = process.env.NODE_ENV !== "production";
+const defaultAllowed = ["https://ssaems-frontend1.onrender.com"];
+const allowedOrigins = allowedOriginsFromEnv.length ? allowedOriginsFromEnv : defaultAllowed;
+
+/**
+ * In dev (no Origin header or localhost tools), allow requests without Origin.
+ * In prod, only allow explicit matches.
+ */
 const corsOptions = {
-  origin: envOrigins.length ? envOrigins : (isDev ? true : false),
-  credentials: true,
+  origin(origin, cb) {
+    if (!origin) return cb(null, true); // allow curl/postman/same-origin
+    if (allowedOrigins.includes(origin)) return cb(null, true);
+    return cb(new Error(`CORS: Origin not allowed -> ${origin}`));
+  },
+  credentials: true, // keep true if you use cookies or Authorization headers from browser
+  methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+  exposedHeaders: ["Content-Length"],
+  optionsSuccessStatus: 204, // make preflight happy on older browsers
+  preflightContinue: false,  // cors will end the OPTIONS request
 };
+
+// Apply CORS for all routes
 app.use(cors(corsOptions));
+// Ensure explicit handling of OPTIONS preflight across the board
+app.options("*", cors(corsOptions));
 
 /* ---------- Core Middlewares ---------- */
 app.use(express.json({ limit: "2mb" }));
@@ -52,14 +73,19 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(morgan("dev"));
 
+// If behind a proxy (Render), trust it so secure cookies & protocol work correctly
+app.set("trust proxy", 1);
+
 /* ---------- Health ---------- */
-app.get("/", (_req, res) => res.json({ status: "ok", service: "SSAEMS Backend" }));
+app.get("/", (_req, res) =>
+  res.json({ status: "ok", service: "SSAEMS Backend", env: NODE_ENV })
+);
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
 /* ---------- Routes ---------- */
 app.use("/api/admin", bulkUsersRoutes);
 app.use("/api/admin", adminUsersRoutes);
-app.use("/api/allocations", allocationRoutes); 
+app.use("/api/allocations", allocationRoutes);
 
 app.use("/api/auth", authRoutes);
 app.use("/api", studentRoutes);
@@ -104,14 +130,21 @@ async function ensureActiveSession() {
 
     await ensureActiveSession();
 
-    app.listen(PORT, () =>
-      console.log(`SSAEMS API running on http://localhost:${PORT}  (NODE_ENV=${process.env.NODE_ENV || "dev"})`)
-    );
+    app.listen(PORT, () => {
+      console.log(
+        `SSAEMS API running on http://localhost:${PORT}  (NODE_ENV=${NODE_ENV})`
+      );
+      console.log("CORS allowed origins:", allowedOrigins.join(", ") || "(none)");
+    });
   } catch (e) {
     console.error("Failed to start server", e);
     process.exit(1);
   }
 })();
 
-process.on("unhandledRejection", (reason) => console.error("Unhandled Rejection:", reason));
-process.on("uncaughtException", (err) => console.error("Uncaught Exception:", err));
+process.on("unhandledRejection", (reason) =>
+  console.error("Unhandled Rejection:", reason)
+);
+process.on("uncaughtException", (err) =>
+  console.error("Uncaught Exception:", err)
+);
